@@ -1,0 +1,150 @@
+TCI server
+
+While a TCI client transmits (the knob's PTT, AetherSDR, the browser remote's
+microphone) the radio's speaker and TX monitor are quiet, and come back as they
+were when the client unkeys. A frequency change from a TCI client wakes a blanked
+screen like a key does (not with Screen always off).
+
+TCI (Transceiver Control Interface, version 2.0) is the protocol of Expert
+Electronics' SDRs, the one AetherSDR serves to WSJT-X and to the
+VFO-Knob. The radio serves it too:
+one WebSocket carries the frequency, mode, filter, AGC, RIT, drive and PTT
+both ways, the S-meter and the TX meters, and the audio, so a knob or a
+program on the network tunes the radio, hears it and keys it.
+
+
+    On by default, on whatever network the radio is on. Turn it off in Settings > General > TCI SERVER or on the
+    web configurator's TCI page (System > TCI). The port is 50001, the one TCI
+    clients expect; both places can change it. Stored in /mnt/tci.conf
+    (enabled=0|1, port=, trust=operate|view).
+
+    What clients may do: Operate (the default: tune, change the mode, key, as
+    always) or Listen only (the TCI page's "Clients may", the card's Clients):
+    a listening client hears and follows the radio, and its tuning and keying
+    are answered with the state as it is, unchanged. An operating client takes
+    control of the radio the moment it tunes or keys, as the knob always did,
+    unless someone is on the air. What it only asks takes no control and is
+    answered with the state: vfo:0,0;, trx:0;, and modulation,
+    rx_filter_band, agc_mode, rit_enable, rit_offset or drive
+    without a value. Hamlib's TCI backend asks VFO:0,0; and TRX:0; at
+    every poll, so a program that polls through it leaves control with the
+    browser or the program that has it. One that keys while it does not have
+    control (it tuned nothing, or someone took control since) gives it back
+    when its transmission ends, to whoever had it (or free); after one that
+    tuned, a browser that was operating sees "TCI client · Take control" and
+    takes control back on purpose (Pairing and control, under Browser panel).
+
+    Not on the internet: TCI has no login, so a connection through Tailscale
+    Funnel is refused, also from a funnel set up by hand (tailscale funnel 50001). The one exception is the browser Panel's own sound and microphone
+    from away, which gives a paired browser's key first and may then only set
+    its audio and key with it (Tailscale Funnel). A TCI
+    program away from home connects over Tailscale on that machine.
+
+    One transmission at a time: the client that keyed holds it, and its unkey
+    or its leaving unkeys the radio, whoever has control by then. Another
+    operating client's key meanwhile, also one sent while the first key is
+    still on its way to the radio, is answered trx:0,false; and changes
+    nothing, not even who has control: the client that keyed still tunes
+    during its over. A key the radio refuses (someone on the air, TCI audio in
+    CW or CW-R) is answered trx:0,false; too, to the client that sent it
+    alone, and so is a PTT key that, once at the radio, does not put it on the
+    air within a second (a frequency it does not transmit on, no data from the
+    base). A key still on its way when its client unkeys or leaves keys
+    nothing, and a client whose key was refused or cancelled unkeys nothing:
+    a transmission keyed meanwhile with the PTT key on the radio or the
+    browser's PTT stays on the air.
+
+    There is no login or pairing for TCI clients: enable it only on a network
+    you trust, or set Listen only, and turn it off when it is not needed.
+    Anyone who reaches the port can key the transmitter when clients may
+    operate. A web page is the exception: a browser names the page's site
+    (Origin) when it opens the socket, and the radio refuses a page from any
+    site but its own, so a page you happen to visit cannot key the radio
+    through your browser. Pat's Winlink mailbox (port 8080) is refused too: it
+    is the radio's, but it shows what anyone can send by Winlink. TCI programs
+    send no Origin and are not affected.
+
+    The TCI SERVER card shows the connected client (address), "no client"
+    otherwise.
+
+    What it carries: vfo, modulation (lsb, usb, cw, cwr, am, nfm, digl,
+    digu), rx_filter_band, agc_mode, rit_enable / rit_offset,
+    drive (TX power, 0-100 %: 0.1 W up to 10 W, 8 W on the X6200; on its
+    battery 5 W from 62 % up),
+    trx (PTT; trx:0,true,tci; keys with the client's
+    audio as the microphone), rx_smeter and rx_channel_sensors (the
+    S-meter in dBm, after rx_sensors_enable:true;), tx_sensors (mic level,
+    forward power, SWR, ALC, after tx_sensors_enable:true;; 0 from the key
+    until the radio's first reading, the SWR 1.0, never less), the RX audio
+    stream (audio_start, in the client's format, below) and the TX audio
+    frames the client answers to each TX_CHRONO. The greeting ends with
+    start; then ready;: the radio is running, as ExpertSDR3 says of an SDR
+    that is on. A client cannot switch the radio on or off: start; and
+    stop; are both answered with start;.
+
+    Audio formats: each client gets the RX audio as it asks with
+    audio_samplerate (24000 or 48000), audio_stream_sample_type (int16,
+    int24, int32, float32), audio_stream_channels (1, or 2 with the same
+    audio in both) and audio_stream_samples (100 to 2048 a frame); a value
+    the radio does not have is answered with the one it keeps. A client that
+    asks for nothing gets TCI's defaults, which WSJT-X and JTDX expect without
+    asking: 48 kHz, float32, stereo, 2048 a frame (about 3 Mbit/s from the
+    radio). A client that asks for 24 kHz and not for a channel count gets one
+    channel in frames of 512, as the radio always sent it (the VFO-Knob does
+    this). The receiver is heard at 24 kHz: for 48 kHz the radio doubles the
+    rate with a filter, flat to 9 kHz. The greeting gives the client's format,
+    a change is answered with what moved, and every frame's header says its
+    rate, type, length and channels.
+
+    TCI audio on the air (trx:0,true,tci;): in every mode but CW and CW-R,
+    where the key is refused. DIGU and DIGL take it as the radio's own FT8,
+    PSK and Winlink take theirs in USB-D. Every 21.3 ms a TX_CHRONO
+    asks for 21.3 ms of audio in the client's format (1024 samples of each
+    channel at 48 kHz, 512 at 24 kHz); the radio takes 8 to 48 kHz in any of
+    the four types and transmits the first channel. A frame whose size is not
+    what its header says ends the transmission at once (the radio unkeys);
+    WSJT-X's and JTDX's frame, twice the size with the audio in its first half,
+    is taken as theirs.
+
+    VFO-Knob: build or flash its AetherSDR firmware, set the radio's address
+    on the knob's configuration page as the AetherSDR computer, port 50001.
+    The knob tunes, changes mode, filter and AGC, keys the radio, shows the
+    S-meter and the TX meters, plays the RX audio on its jack and sends its
+    microphone when keyed.
+
+    Other clients: anything that talks to AetherSDR or ExpertSDR3 over TCI
+    (loggers, CW keyers) should work for what the radio has; what it does not
+    have is answered with the radio's own value.
+
+    Commands in any case, as TCI says the case of the letters does not matter:
+    VFO:0,0,7074000; and TRX:0,TRUE,TCI; (Hamlib's TCI backend sends its
+    commands in capitals) are vfo:0,0,7074000; and trx:0,true,tci;, the
+    words in them too (USB, INT16). The radio answers in lower case.
+    dds (the receiver's centre, which Hamlib sends before each vfo) is
+    answered with the frequency, set or asked, and changes nothing; a command
+    the radio does not know at all is left unanswered, as TCI says.
+
+    WSJT-X, WSJT-X Improved and JTDX: CAT and audio over the one connection,
+    no sound card or cable. The audio takes about 3 Mbit/s from the radio, and
+    about 6 Mbit/s more from the PC while it transmits (they send each TX frame
+    at twice its size).
+
+        Settings > Radio: Rig "TCI Client RX1", Network Server the radio's
+        address and port (x6100.local:50001), PTT Method CAT (the only one TCI
+        has), Mode Data/Pkt (the radio in DIGU, as for its own FT8) or USB; or
+        None, with the radio's mode set yourself. Split Operation None or Fake
+        It. Up to v0.3.6 TCI audio did not go out in DIGU, so Mode had to be
+        USB.
+
+        Settings > Audio: "Use TCI Audio" on, then restart the program. The Rx
+        dB box beside it sets the receive level. Keep it on: their keying always
+        sends TCI audio (trx:0,true,tci;), so with it off the radio is keyed
+        with silence.
+
+        The transmit level is their Pwr slider; set it so the radio's ALC shows
+        little or none, as with a sound card.
+
+        On the radio, Clients on Operate (Settings > General > TCI SERVER, or
+        the TCI page's "Clients may"). With Listen only, their band and mode
+        changes are answered with the radio's state, unchanged, and they stop
+        with a Rig Failure.

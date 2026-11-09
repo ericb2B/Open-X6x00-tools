@@ -36,24 +36,39 @@ class AudioMonitor:
         self.audio_queue = queue.Queue(maxsize=queue_maxsize)
         self.monitor_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
-        self.enabled = True
+        self._enabled = True
         self._output_stream: Optional[sd.OutputStream] = None
+    
+    @property
+    def enabled(self) -> bool:
+        """Get the enabled state."""
+        return self._enabled
+    
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        """Set the enabled state."""
+        self._enabled = value
     
     def start_monitoring(self) -> None:
         """Start the monitoring thread."""
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            return  # Already running
+        
         self.stop_event.clear()
         self.monitor_thread = threading.Thread(target=self._monitor_worker, daemon=True)
         self.monitor_thread.start()
+        print("Monitoring thread started")
     
     def stop_monitoring(self) -> None:
         """Stop the monitoring thread."""
         self.stop_event.set()
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=2)
+        print("Monitoring thread stopped")
     
     def queue_audio(self, audio_data: np.ndarray) -> None:
         """Add audio data to the monitoring queue."""
-        if self.enabled:
+        if self._enabled:
             try:
                 self.audio_queue.put_nowait(audio_data)
             except queue.Full:
@@ -75,12 +90,13 @@ class AudioMonitor:
                 samplerate=AUDIO_SAMPLE_RATE,
                 channels=AUDIO_CHANNELS,
                 dtype=AUDIO_DTYPE,
-                blocksize=1024
+                blocksize=1024,
+                latency='low'
             ) as output:
                 while not self.stop_event.is_set():
                     try:
                         audio = self.audio_queue.get(timeout=1.0)
-                        if self.enabled and audio is not None:
+                        if self._enabled and audio is not None:
                             output.write(audio)
                         self.audio_queue.task_done()
                     except queue.Empty:
@@ -119,7 +135,7 @@ class AudioStreamer:
             
             # Try alternative names
             for i, device in enumerate(devices):
-                if "tci" in device["name"].lower() and device["max_output_channels"] >= 2:
+                if "tci" in device["name"].lower():
                     print(f"Found TCI device at index {i}: {device['name']}")
                     return i
             
@@ -136,9 +152,6 @@ class AudioStreamer:
         devices = sd.query_devices()
         print(f"Using audio device: {device_index} - {devices[device_index]['name']}")
 
-        # Start monitoring
-        self.monitor.start_monitoring()
-
         # Connect to TCI server (already connected in main)
         await websocket_client.start_audio()
         print("TCI connected and receiving audio")
@@ -148,7 +161,8 @@ class AudioStreamer:
             samplerate=AUDIO_SAMPLE_RATE,
             channels=AUDIO_CHANNELS,
             dtype=AUDIO_DTYPE,
-            blocksize=AUDIO_BLOCKSIZE
+            blocksize=AUDIO_BLOCKSIZE,
+            latency='low'
         ) as output:
             while self.is_running:
                 try:
@@ -174,17 +188,15 @@ class AudioStreamer:
                     # Write to main output
                     output.write(audio)
                     
-                    # Queue for monitoring
-                    self.monitor.queue_audio(audio)
+                    # Queue for monitoring if enabled
+                    if self.monitor.enabled:
+                        self.monitor.queue_audio(audio)
 
                 except asyncio.TimeoutError:
                     continue
                 except Exception as e:
                     if self.is_running:
                         raise RuntimeError(f"Streaming error: {e}")
-
-        # Cleanup
-        self.monitor.stop_monitoring()
     
     def _handle_info_message(self, data: bytes) -> None:
         """Handle TCI info message."""

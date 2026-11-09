@@ -46,7 +46,7 @@ class AudioDeviceManager:
             print("Virtual audio devices created successfully")
             
             # Give some time for devices to be registered
-            time.sleep(1)
+            time.sleep(2)
             
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to create virtual audio devices: {e.stderr}")
@@ -84,6 +84,29 @@ class AudioDeviceManager:
         except Exception as e:
             print(f"Error listing devices: {e}")
     
+    def check_pulseaudio_modules(self) -> None:
+        """Check what PulseAudio modules are currently loaded."""
+        try:
+            result = subprocess.run(["pactl", "list", "modules"], 
+                                  capture_output=True, text=True)
+            print("Loaded PulseAudio modules:")
+            print(result.stdout)
+        except Exception as e:
+            print(f"Error checking pulseaudio modules: {e}")
+    
+    def get_tci_devices(self) -> list:
+        """Get all TCI-related devices."""
+        try:
+            devices = sd.query_devices()
+            tci_devices = []
+            for i, device in enumerate(devices):
+                if "tci" in device["name"].lower():
+                    tci_devices.append((i, device["name"]))
+            return tci_devices
+        except Exception as e:
+            print(f"Error getting TCI devices: {e}")
+            return []
+    
     def verify_device_exists(self, device_name: str) -> bool:
         """Verify if a device exists by name."""
         try:
@@ -96,24 +119,34 @@ class AudioDeviceManager:
             print(f"Error verifying device: {e}")
             return False
     
-    def check_pulseaudio_modules(self) -> None:
-        """Check what PulseAudio modules are currently loaded."""
+    def check_sinks(self) -> list:
+        """Check PulseAudio sinks."""
         try:
-            result = subprocess.run(["pactl", "list", "modules"], 
+            result = subprocess.run(["pactl", "list", "short", "sinks"], 
                                   capture_output=True, text=True)
-            print("Loaded PulseAudio modules:")
-            print(result.stdout)
+            sinks = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        sinks.append((parts[0], parts[1]))
+            return sinks
         except Exception as e:
-            print(f"Error checking pulseaudio modules: {e}")
+            print(f"Error checking sinks: {e}")
+            return []
     
-    def get_device_index_by_name(self, device_name: str) -> int:
-        """Get device index by name (case insensitive)."""
+    def check_sources(self) -> list:
+        """Check PulseAudio sources."""
         try:
-            devices = sd.query_devices()
-            for i, device in enumerate(devices):
-                if device["name"].lower() == device_name.lower():
-                    return i
-            return -1
+            result = subprocess.run(["pactl", "list", "short", "sources"], 
+                                  capture_output=True, text=True)
+            sources = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        sources.append((parts[0], parts[1]))
+            return sources
         except Exception as e:
-            print(f"Error getting device index: {e}")
-            return -1
+            print(f"Error checking sources: {e}")
+            return []

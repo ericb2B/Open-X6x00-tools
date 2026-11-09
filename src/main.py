@@ -65,6 +65,9 @@ class TCIAudioApp:
         self.root.title(WINDOW_TITLE)
         self.root.geometry(WINDOW_SIZE)
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
+        
+        # Set initial monitor state from GUI
+        self.audio_monitor.enabled = self.gui.is_monitor_enabled()
     
     def _on_s_meter_update(self, s_value: int) -> None:
         """Handle S-meter update from audio streamer."""
@@ -114,6 +117,9 @@ class TCIAudioApp:
         # Stop audio streamer
         self.audio_streamer.stop()
 
+        # Stop monitoring
+        self.audio_monitor.stop_monitoring()
+        
         # Give it time to stop gracefully
         if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=3)
@@ -149,8 +155,25 @@ class TCIAudioApp:
             # Check what modules are loaded
             self.audio_device_manager.check_pulseaudio_modules()
             
+            # Check sinks and sources directly via pactl
+            print("=== PULSEAUDIO SINKS ===")
+            sinks = self.audio_device_manager.check_sinks()
+            for sink_id, sink_name in sinks:
+                print(f"  Sink {sink_id}: {sink_name}")
+            
+            print("=== PULSEAUDIO SOURCES ===")
+            sources = self.audio_device_manager.check_sources()
+            for source_id, source_name in sources:
+                print(f"  Source {source_id}: {source_name}")
+            print("==========================")
+            
+            # List all devices to see what's available
+            print("=== ALL AUDIO DEVICES ===")
+            self.audio_device_manager.list_audio_devices()
+            print("==========================")
+            
             # Verify devices were created
-            time.sleep(1)  # Give time for devices to be registered
+            time.sleep(2)  # Give time for devices to be registered
             
             # Get server config
             ip, port = self.gui.get_server_config()
@@ -176,6 +199,24 @@ class TCIAudioApp:
                         device_index = i
                         break
             
+            # If still not found, try to find any device with 2+ channels
+            if device_index is None:
+                devices = sd.query_devices()
+                for i, device in enumerate(devices):
+                    if device["max_output_channels"] >= 2 and "tci" in device["name"].lower():
+                        print(f"Found TCI device by channel check: {device['name']}")
+                        device_index = i
+                        break
+            
+            # If still not found, try using the pulse device
+            if device_index is None:
+                devices = sd.query_devices()
+                for i, device in enumerate(devices):
+                    if "pulse" in device["name"].lower() and device["max_output_channels"] >= 2:
+                        print(f"Using pulse device as fallback: {device['name']}")
+                        device_index = i
+                        break
+            
             if device_index is None:
                 # List available devices for debugging
                 self.audio_device_manager.list_audio_devices()
@@ -192,7 +233,7 @@ class TCIAudioApp:
 
     async def _start_audio_stream(self, device_index: int) -> None:
         """Start the audio streaming loop."""
-        # Start monitoring
+        # Update monitor state from GUI
         self.audio_monitor.enabled = self.gui.is_monitor_enabled()
         
         # Connect to TCI server
@@ -219,7 +260,6 @@ class TCIAudioApp:
             self.root.quit()
             self.root.destroy()
 
-
 def main():
     """Main entry point."""
     root = tk.Tk()
@@ -233,3 +273,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+            
